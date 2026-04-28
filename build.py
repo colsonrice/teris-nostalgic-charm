@@ -1,19 +1,19 @@
 """Generate the index.html for Teri's Nostalgic Charm from product data.
 
 Pipeline:
-    1. /tmp/teri_ebay.html   ← raw HTML scraped from her eBay store
-    2. /tmp/parse_ebay2.py   ← strict per-card parser → /tmp/teri_products.json
-    3. this script           ← /tmp/teri_products.json → index.html
+    1. _scrape_etsy.py  ← scrapes Etsy shop → _source_products.json
+    2. this script      ← _source_products.json → index.html + products.json
 
-Re-run this any time the source data changes. Reach out via the CONTACT_EMAIL
-below; update that constant to route inquiries to Teri's real inbox.
+Re-run this any time the source data changes. Update CONTACT_EMAIL below
+to route inquiries to Teri's real inbox before going live.
 """
 import json
 import re
 from pathlib import Path
 from urllib.parse import quote
 
-OUT_DIR = Path("/Users/Web Projects/terry")
+HERE    = Path(__file__).parent
+OUT_DIR = HERE
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---- Config ----------------------------------------------------------
@@ -23,7 +23,7 @@ SITE_TITLE = "Teri's Nostalgic Charm"
 SITE_TAG = "A Catalog of Wearable Mementos"
 # ---------------------------------------------------------------------
 
-with open("/tmp/teri_products.json") as f:
+with open(HERE / "_source_products.json") as f:
     products = json.load(f)
 
 
@@ -175,18 +175,30 @@ def render_product(item, klass="card"):
 </a>"""
 
 
-# Featured pick
-featured = next(p for p in catalog if "Gingerbread" in p["title"])
+# Featured pick — prefer Holiday/Whimsy with image, fall back to first item
+def _pick_featured(cat):
+    preferred_cats = ["Holiday", "Whimsy", "Menagerie"]
+    for c in preferred_cats:
+        candidates = [p for p in cat if p["category"] == c and p["image"]]
+        if candidates:
+            return candidates[0]
+    return cat[0]
+
+featured = _pick_featured(catalog)
 
 def pick(category, n=4):
     return [p for p in catalog if p["category"] == category][:n]
 
-catalog_grid = (
+raw_grid = (
     pick("Holiday", 3) + pick("Menagerie", 2) + pick("Vocation", 2)
     + pick("Sport", 2) + pick("Whimsy", 1)
 )
-seen = set()
-catalog_grid = [p for p in catalog_grid if not (p["no"] in seen or seen.add(p["no"]))]
+seen: set[str] = set()
+catalog_grid = [p for p in raw_grid if not (p["no"] in seen or seen.add(p["no"]))]
+# If we don't have enough categorized items, pad with uncategorized ("Curio")
+if len(catalog_grid) < 6:
+    curios = [p for p in catalog if p["no"] not in seen]
+    catalog_grid += curios[:max(0, 6 - len(catalog_grid))]
 
 themes = [
     {"name": "Holiday", "blurb": "Snowflakes, gingerbread, hearts, hares, four-leaf clovers — an ornament for every calendar page.",
@@ -201,7 +213,19 @@ themes = [
      "n": len([p for p in catalog if p['category'] == 'Whimsy'])},
 ]
 
-spread_pick = next(p for p in catalog if "Lady Justice" in p["title"] or "Attorney" in p["title"])
+def _pick_spread(cat, exclude_no=None):
+    """Pick a statement piece — necklace or brooch with image, different from featured."""
+    form_pref = ["Necklace", "Pin · Brooch", "Bracelet", "Earrings", "Charm"]
+    for f in form_pref:
+        candidates = [
+            p for p in cat
+            if p["form"] == f and p["image"] and p["no"] != exclude_no
+        ]
+        if candidates:
+            return candidates[0]
+    return next(p for p in cat if p["no"] != exclude_no)
+
+spread_pick = _pick_spread(catalog, exclude_no=featured["no"])
 
 strip_items = [p for p in catalog if p not in catalog_grid][:8]
 

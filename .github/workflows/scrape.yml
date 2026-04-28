@@ -1,0 +1,78 @@
+name: Daily Etsy Scrape & Deploy
+
+# Runs every day at 6 AM UTC + can be triggered manually.
+# Uses the Etsy Open API v3 when ETSY_API_KEY is set as a repo secret,
+# otherwise falls back to the RSS feed (10 most-recent listings).
+#
+# ── HOW TO ENABLE FULL CATALOG SCRAPING ──────────────────────────────────────
+# 1. Create a free Etsy developer account:
+#      https://www.etsy.com/developers/register
+# 2. Create an app → copy the "Keystring"
+# 3. In this GitHub repo: Settings → Secrets → Actions → New repository secret
+#      Name:  ETSY_API_KEY
+#      Value: <your keystring>
+# 4. Re-run this workflow — it will now fetch ALL active listings from Etsy.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 6:00 AM UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit updated _source_products.json + index.html back
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  scrape-build-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Scrape Etsy listings
+        env:
+          ETSY_API_KEY: ${{ secrets.ETSY_API_KEY }}
+        run: python3 _scrape_etsy.py
+
+      - name: Build site
+        run: python3 build.py
+
+      - name: Commit updated catalog
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add _source_products.json products.json index.html
+          if git diff --staged --quiet; then
+            echo "No catalog changes today — skipping commit."
+          else
+            git commit -m "chore: Etsy sync $(date -u +'%Y-%m-%d')"
+            git push
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload the freshly-built workspace — includes the new index.html
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
